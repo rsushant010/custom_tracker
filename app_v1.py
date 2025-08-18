@@ -286,7 +286,7 @@ def run_setup_wizard(username):
     if st.session_state.setup_step == 2:
         st.subheader("Step 2: Define Your Subjects & Set Initial Targets")
         st.info("You can edit the table below directly. Add your subjects, categorize them, and set your initial daily and weekly study goals.")
-        st.data_editor(st.session_state.setup_subjects, key="subjects_editor", num_rows="dynamic", use_container_width=True)
+        edited_subjects_df = st.data_editor(st.session_state.setup_subjects, key="subjects_editor", num_rows="dynamic", use_container_width=True)
         
         col1, col2 = st.columns(2)
         with col1:
@@ -294,7 +294,7 @@ def run_setup_wizard(username):
                 st.session_state.setup_step = 1; st.rerun()
         with col2:
             if st.button("Next: Set Personal Goals ➡️"):
-                st.session_state.setup_subjects = pd.DataFrame(st.session_state.subjects_editor)
+                st.session_state.setup_subjects = pd.DataFrame(edited_subjects_df)
                 if not st.session_state.setup_subjects.empty:
                     st.session_state.setup_step = 3
                     if 'personal_metrics' not in st.session_state:
@@ -306,7 +306,7 @@ def run_setup_wizard(username):
     if st.session_state.setup_step == 3:
         st.subheader("Step 3: Customize Your Personal Wellness Tracker")
         st.info("Define personal goals you want to track. Edit the defaults, add your own, and specify units for numerical goals!")
-        st.data_editor(
+        edited_personal_df = st.data_editor(
             st.session_state.personal_metrics,
             key="personal_editor",
             column_config={ "Type": st.column_config.SelectboxColumn("Type", options=["Time", "Number"]) },
@@ -314,14 +314,14 @@ def run_setup_wizard(username):
         )
 
         if st.button("✅ Complete Setup", type="primary"):
-            final_subjects = pd.DataFrame(st.session_state.subjects_editor).dropna(how='all').drop_duplicates(subset=['Subject'])
+            final_subjects = pd.DataFrame(st.session_state.setup_subjects).dropna(how='all').drop_duplicates(subset=['Subject'])
             today_str = date.today().strftime("%Y-%m-%d")
             for _, row in final_subjects.iterrows():
                 add_user_subject(username, row['Subject'], row['Category'])
                 set_weekly_target(username, row['Subject'], row['Weekly Target (hrs)'])
                 set_daily_target(username, row['Subject'], today_str, row['Daily Target (hrs)'])
             
-            final_personal = pd.DataFrame(st.session_state.personal_editor).dropna(how='all').drop_duplicates(subset=['Metric'])
+            final_personal = pd.DataFrame(edited_personal_df).dropna(how='all').drop_duplicates(subset=['Metric'])
             for _, row in final_personal.iterrows():
                 set_personal_target(username, row['Metric'], row['Type'].lower(), row['Target'], row['Unit'])
 
