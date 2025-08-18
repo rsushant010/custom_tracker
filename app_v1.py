@@ -286,7 +286,7 @@ def run_setup_wizard(username):
     if st.session_state.setup_step == 2:
         st.subheader("Step 2: Define Your Subjects & Set Initial Targets")
         st.info("You can edit the table below directly. Add your subjects, categorize them, and set your initial daily and weekly study goals.")
-        edited_subjects_df = st.data_editor(st.session_state.setup_subjects, key="subjects_editor", num_rows="dynamic", use_container_width=True)
+        st.data_editor(st.session_state.setup_subjects, key="subjects_editor", num_rows="dynamic", use_container_width=True)
         
         col1, col2 = st.columns(2)
         with col1:
@@ -294,7 +294,7 @@ def run_setup_wizard(username):
                 st.session_state.setup_step = 1; st.rerun()
         with col2:
             if st.button("Next: Set Personal Goals ➡️"):
-                st.session_state.setup_subjects = pd.DataFrame(edited_subjects_df)
+                st.session_state.setup_subjects = pd.DataFrame(st.session_state.subjects_editor)
                 if not st.session_state.setup_subjects.empty:
                     st.session_state.setup_step = 3
                     if 'personal_metrics' not in st.session_state:
@@ -306,7 +306,7 @@ def run_setup_wizard(username):
     if st.session_state.setup_step == 3:
         st.subheader("Step 3: Customize Your Personal Wellness Tracker")
         st.info("Define personal goals you want to track. Edit the defaults, add your own, and specify units for numerical goals!")
-        edited_personal_df = st.data_editor(
+        st.data_editor(
             st.session_state.personal_metrics,
             key="personal_editor",
             column_config={ "Type": st.column_config.SelectboxColumn("Type", options=["Time", "Number"]) },
@@ -314,14 +314,14 @@ def run_setup_wizard(username):
         )
 
         if st.button("✅ Complete Setup", type="primary"):
-            final_subjects = pd.DataFrame(st.session_state.setup_subjects).dropna(how='all').drop_duplicates(subset=['Subject'])
+            final_subjects = pd.DataFrame(st.session_state.subjects_editor).dropna(how='all').drop_duplicates(subset=['Subject'])
             today_str = date.today().strftime("%Y-%m-%d")
             for _, row in final_subjects.iterrows():
                 add_user_subject(username, row['Subject'], row['Category'])
                 set_weekly_target(username, row['Subject'], row['Weekly Target (hrs)'])
                 set_daily_target(username, row['Subject'], today_str, row['Daily Target (hrs)'])
             
-            final_personal = pd.DataFrame(edited_personal_df).dropna(how='all').drop_duplicates(subset=['Metric'])
+            final_personal = pd.DataFrame(st.session_state.personal_editor).dropna(how='all').drop_duplicates(subset=['Metric'])
             for _, row in final_personal.iterrows():
                 set_personal_target(username, row['Metric'], row['Type'].lower(), row['Target'], row['Unit'])
 
@@ -601,7 +601,6 @@ def main():
             st.subheader("💪 Personal Wellness Tracker")
             personal_targets = get_personal_targets(username)
             
-            # --- FIX: Changed column weighting ---
             col1, col2 = st.columns([1, 2])
             with col1:
                 with st.expander("Log Your Daily Metrics", expanded=True):
@@ -624,7 +623,6 @@ def main():
                 actuals = get_personal_log_by_date(username, analysis_p_date.strftime("%Y-%m-%d"))
                 
                 if actuals:
-                    # --- FIX: Display metrics in rows of 3 ---
                     all_metrics = list(personal_targets.items())
                     for i in range(0, len(all_metrics), 3):
                         metric_chunk = all_metrics[i:i+3]
@@ -642,10 +640,13 @@ def main():
                                 delta = datetime.combine(date.min, target_time) - datetime.combine(date.min, actual_time)
                                 metric_cols[j].metric(label=f"{name} (T: {target_time.strftime('%H:%M')})", value=actual_time.strftime('%H:%M'), delta=format_time_delta(delta))
                             else:
-                                actual_num = int(actual_val)
-                                target_num = int(target_val_str)
-                                delta = actual_num - target_num
-                                metric_cols[j].metric(label=f"{name} (T: {target_num} {unit})", value=f"{actual_num} {unit}", delta=f"{delta:+}")
+                                try:
+                                    actual_num = int(actual_val)
+                                    target_num = int(target_val_str)
+                                    delta = actual_num - target_num
+                                    metric_cols[j].metric(label=f"{name} (T: {target_num} {unit})", value=f"{actual_num} {unit}", delta=f"{delta:+}")
+                                except (ValueError, TypeError):
+                                    metric_cols[j].metric(label=f"{name}", value=f"{actual_val} {unit}", delta="N/A")
                 else:
                     st.info(f"No personal data logged for {analysis_p_date.strftime('%Y-%m-%d')}.")
 
