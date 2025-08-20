@@ -44,23 +44,43 @@ conn = sqlite3.connect('study_tracker.db', check_same_thread=False)
 c = conn.cursor()
 
 def update_db_schema():
-    """Updates the database schema with new columns if they don't exist to prevent errors."""
+    """Updates the database schema and performs data migration for existing users."""
     try:
+        # Check for personal targets unit column
         c.execute("PRAGMA table_info(personal_targets)")
         columns = [col[1] for col in c.fetchall()]
         if 'unit' not in columns:
             c.execute("ALTER TABLE personal_targets ADD COLUMN unit TEXT")
             conn.commit()
             
+        # Check for user_subjects default target columns
         c.execute("PRAGMA table_info(user_subjects)")
         columns = [col[1] for col in c.fetchall()]
         if 'default_daily_target' not in columns:
             c.execute("ALTER TABLE user_subjects ADD COLUMN default_daily_target REAL DEFAULT 1.0")
-        if 'default_weekly_target' not in columns:
             c.execute("ALTER TABLE user_subjects ADD COLUMN default_weekly_target REAL DEFAULT 5.0")
-        conn.commit()
+            conn.commit()
+
+            # --- DATA MIGRATION SCRIPT ---
+            # This runs ONCE for existing users to move their old weekly targets
+            # into the new default target system.
+            c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='weekly_targets'")
+            if c.fetchone():
+                c.execute("SELECT username, subject, weekly_target FROM weekly_targets")
+                old_weekly_targets = c.fetchall()
+                for username, subject, weekly_target in old_weekly_targets:
+                    # Calculate a default daily target based on the old weekly one
+                    daily_target = round(weekly_target / 7, 2)
+                    c.execute("""
+                        UPDATE user_subjects 
+                        SET default_weekly_target = ?, default_daily_target = ?
+                        WHERE username = ? AND subject = ?
+                    """, (weekly_target, daily_target, username, subject))
+                conn.commit()
 
     except sqlite3.Error:
+        # This will fail if tables don't exist yet, which is fine.
+        # create_tables() will handle it.
         pass
 
 def create_tables():
@@ -166,10 +186,6 @@ def delete_study_log(log_id):
 def get_logs_by_date(username, date_str):
     c.execute('SELECT subject, subsection, duration FROM study_log WHERE username =? AND log_date =?', (username, date_str))
     return pd.DataFrame(c.fetchall(), columns=['Subject', 'Type', 'Duration'])
-
-def set_weekly_target(username, subject, weekly_target):
-    c.execute('UPDATE user_subjects SET default_weekly_target=? WHERE username=? AND subject=?', (weekly_target, username, subject))
-    conn.commit()
 
 def get_weekly_targets(username):
     user_subjects_df = get_user_subjects(username)
@@ -688,7 +704,7 @@ def main():
 
         
         with tabs[7]: # Full History & Edit
-            st.subheader("📚 Full Study History & Edit Logs")
+            st.subheader("📚 Full History & Edit Logs")
             if not df_all.empty:
                 st.dataframe(df_all[['Date', 'Subject', 'Type', 'Duration']].sort_values(by='Date', ascending=False), use_container_width=True)
                 st.markdown("---")
