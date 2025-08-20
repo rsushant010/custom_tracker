@@ -92,6 +92,7 @@ def create_tables():
             subject TEXT, subsection TEXT, duration REAL,
             FOREIGN KEY(username) REFERENCES users(username)
         )''')
+    # This table is now legacy but kept for migration purposes for old users.
     c.execute('''
         CREATE TABLE IF NOT EXISTS weekly_targets (
             username TEXT, subject TEXT, weekly_target REAL,
@@ -536,12 +537,11 @@ def main():
             fig_weekly.update_traces(textposition='outside'); st.plotly_chart(fig_weekly, use_container_width=True)
 
         with tabs[3]: # Set Targets
-            st.subheader("Set Your Study Targets")
+            st.subheader("Set Daily Target Overrides")
+            st.info("Your default targets are applied automatically. Use this section only to set a different target for a specific day.")
             target_date_selector = st.date_input("Select a date to set daily targets", datetime.now(), key="set_target_date")
             df_daily_targets = get_daily_targets_for_date(username, target_date_selector.strftime("%Y-%m-%d"))
             daily_targets_dict = {row['Subject']: row['Daily Target'] for _, row in df_daily_targets.iterrows()}
-            df_weekly_targets = get_weekly_targets(username)
-            weekly_targets_dict = {row['Subject']: row['Weekly Target'] for _, row in df_weekly_targets.iterrows()}
             with st.form("targets_form"):
                 st.markdown(f"**Daily Targets for {target_date_selector.strftime('%Y-%m-%d')}**")
                 new_daily_targets = {}
@@ -553,34 +553,24 @@ def main():
                 with col2:
                     for subject in subjects_col2:
                         new_daily_targets[subject] = st.number_input(f"{subject}", 0.0, value=float(daily_targets_dict.get(subject, 0)), key=f"d_{subject}_2", step=0.25)
-                st.markdown("---")
-                st.markdown("**Overall Weekly Targets**")
-                new_weekly_targets = {}
-                w_col1, w_col2 = st.columns(2)
-                with w_col1:
-                    for subject in subjects_col1:
-                        new_weekly_targets[subject] = st.number_input(f"{subject}", 0.0, value=float(weekly_targets_dict.get(subject, 0)), key=f"w_{subject}", step=0.5)
-                with w_col2:
-                    for subject in subjects_col2:
-                        new_weekly_targets[subject] = st.number_input(f"{subject}", 0.0, value=float(weekly_targets_dict.get(subject, 0)), key=f"w_{subject}_2", step=0.5)
-                if st.form_submit_button("Save All Targets"):
+                
+                if st.form_submit_button("Save Daily Overrides"):
                     for subject, daily_target in new_daily_targets.items():
                         set_daily_target(username, subject, target_date_selector.strftime("%Y-%m-%d"), daily_target)
-                    for subject, weekly_target in new_weekly_targets.items():
-                        set_weekly_target(username, subject, weekly_target)
-                    st.success("Your targets have been saved!"); st.rerun()
+                    st.success("Your daily overrides have been saved!"); st.rerun()
 
         with tabs[4]: # Recommendations
             st.subheader("💡 Personalized Study Recommendations")
             if not df_all.empty:
-                col1, col2 = st.columns(2)
-                with col1:
+                df_weekly_targets = get_weekly_targets(username)
+                start_of_week_dt = date.today() - timedelta(days=date.today().weekday())
+                df_weekly_logs = df_all[df_all['Date'].dt.date >= start_of_week_dt].groupby('Subject')['Duration'].sum().reset_index()
+                df_weekly_analysis = pd.merge(df_weekly_targets, df_weekly_logs, on="Subject", how="left").fillna(0)
+                df_weekly_analysis['Gap'] = df_weekly_analysis['Weekly Target'] - df_weekly_analysis['Duration']
+                
+                rec_col1, rec_col2 = st.columns(2)
+                with rec_col1:
                     st.markdown("#### 🎯 Weekly Target Adherence")
-                    start_of_week_dt = date.today() - timedelta(days=date.today().weekday())
-                    df_weekly_logs = df_all[df_all['Date'].dt.date >= start_of_week_dt].groupby('Subject')['Duration'].sum().reset_index()
-                    df_weekly_targets = get_weekly_targets(username)
-                    df_weekly_analysis = pd.merge(df_weekly_targets, df_weekly_logs, on="Subject", how="left").fillna(0)
-                    df_weekly_analysis['Gap'] = df_weekly_analysis['Weekly Target'] - df_weekly_analysis['Duration']
                     behind_subjects = df_weekly_analysis[df_weekly_analysis['Gap'] > 0].sort_values(by='Gap', ascending=False)
                     if not behind_subjects.empty:
                         st.warning("Focus Areas for This Week:")
@@ -588,7 +578,7 @@ def main():
                             st.write(f"- **{row['Subject']}**: You're **{row['Gap']:.1f} hours** behind your weekly goal.")
                     else:
                         st.success("Excellent! You're on track with all weekly targets!")
-                with col2:
+                with rec_col2:
                     st.markdown("#### 🗓️ Consistency Check")
                     seven_days_ago = date.today() - timedelta(days=7)
                     days_studied = df_all[df_all['Date'].dt.date >= seven_days_ago]['Date'].dt.date.nunique()
@@ -597,6 +587,22 @@ def main():
                         st.success("Great consistency! Keep up the momentum.")
                     else:
                         st.info("Try shorter, daily sessions to build a stronger habit.")
+                
+                st.markdown("---")
+                st.markdown("#### 🚀 Today's Suggested Focus")
+                daily_targets = get_daily_targets_for_date(username, date.today().strftime("%Y-%m-%d"))
+                daily_logs = get_logs_by_date(username, date.today().strftime("%Y-%m-%d")).groupby('Subject')['Duration'].sum().reset_index()
+                daily_analysis = pd.merge(daily_targets, daily_logs, on="Subject", how="left").fillna(0)
+                daily_analysis['Gap'] = daily_analysis['Daily Target'] - daily_analysis['Duration']
+                
+                focus_subjects = daily_analysis[daily_analysis['Gap'] > 0].sort_values(by='Gap', ascending=False)
+                if not focus_subjects.empty:
+                    st.info("Based on your daily goals, consider focusing on these subjects today:")
+                    for _, row in focus_subjects.head(3).iterrows():
+                        st.write(f"- **{row['Subject']}**: **{row['Gap']:.1f} hours** remaining to meet your daily goal.")
+                else:
+                    st.success("You've met all your daily study goals for today! Great job!")
+
 
         with tabs[5]: # Weekly Revision
             st.subheader("🗓️ Weekly Revision")
@@ -704,7 +710,7 @@ def main():
 
         
         with tabs[7]: # Full History & Edit
-            st.subheader("📚 Full History & Edit Logs")
+            st.subheader("📚 Full Study History & Edit Logs")
             if not df_all.empty:
                 st.dataframe(df_all[['Date', 'Subject', 'Type', 'Duration']].sort_values(by='Date', ascending=False), use_container_width=True)
                 st.markdown("---")
@@ -739,7 +745,7 @@ def main():
             
             with st.expander("Manage Study Subjects"):
                 if not user_subjects_df.empty:
-                    st.dataframe(user_subjects_df[['Subject', 'Category']], use_container_width=True)
+                    st.dataframe(user_subjects_df[['Subject', 'Category', 'Default Daily Target', 'Default Weekly Target']], use_container_width=True)
                     st.markdown("---")
                     st.markdown("#### Edit or Delete a Subject")
                     subject_to_edit_id = st.selectbox("Select Subject to Edit", user_subjects_df['id'], format_func=lambda x: user_subjects_df[user_subjects_df['id'] == x]['Subject'].iloc[0])
@@ -749,10 +755,13 @@ def main():
                             st.write(f"**Editing: {subject_data['Subject']}**")
                             new_name = st.text_input("New Subject Name", value=subject_data['Subject'])
                             new_cat = st.text_input("New Category Name", value=subject_data['Category'])
+                            new_daily = st.number_input("Default Daily Target (hrs)", 0.25, 10.0, value=subject_data['Default Daily Target'], step=0.25)
+                            new_weekly = st.number_input("Default Weekly Target (hrs)", 0.5, 50.0, value=subject_data['Default Weekly Target'], step=0.5)
+                            
                             e_col1, e_col2 = st.columns(2)
                             with e_col1:
                                 if st.form_submit_button("Update Subject"):
-                                    update_user_subject(subject_to_edit_id, new_name, new_cat)
+                                    update_user_subject(subject_to_edit_id, new_name, new_cat, new_daily, new_weekly)
                                     st.success("Subject updated!"); st.rerun()
                             with e_col2:
                                 if st.form_submit_button("Delete Subject"):
@@ -764,16 +773,19 @@ def main():
                     a_col1, a_col2 = st.columns(2)
                     with a_col1:
                         new_subject_name = st.text_input("Subject Name")
-                    with a_col2:
                         new_subject_cat = st.text_input("Category")
+                    with a_col2:
+                        new_daily_target = st.number_input("Default Daily Target (hrs)", 0.25, 10.0, 1.0, 0.25)
+                        new_weekly_target = st.number_input("Default Weekly Target (hrs)", 0.5, 50.0, 5.0, 0.5)
                     if st.form_submit_button("Add Subject"):
                         if new_subject_name and new_subject_cat:
-                            add_user_subject(username, new_subject_name, new_subject_cat)
+                            add_user_subject(username, new_subject_name, new_subject_cat, new_daily_target, new_weekly_target)
                             st.success(f"Added '{new_subject_name}' to your subjects."); st.rerun()
                         else:
                             st.warning("Please provide both subject name and category.")
             
             with st.expander("Manage Personal Goals"):
+                personal_targets = get_personal_targets(username)
                 personal_targets_df = pd.DataFrame.from_dict(personal_targets, orient='index').reset_index().rename(columns={'index': 'Metric', 'target': 'Target', 'unit': 'Unit', 'type': 'Type'})
                 st.dataframe(personal_targets_df[['Metric', 'Type', 'Target', 'Unit']], use_container_width=True)
                 
