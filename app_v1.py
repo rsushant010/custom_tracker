@@ -337,8 +337,11 @@ def main():
 
     update_db_schema()
     
-    if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
-    if 'username' not in st.session_state: st.session_state['username'] = ""
+    # --- FIX: Persistent login check using query params ---
+    if 'user' in st.query_params and 'logged_in' not in st.session_state:
+        st.session_state.logged_in = True
+        st.session_state.username = st.query_params['user']
+
     if 'last_selected_subject' not in st.session_state:
         st.session_state.last_selected_subject = {}
 
@@ -346,19 +349,24 @@ def main():
     choice = st.sidebar.selectbox("Menu", ["Login", "SignUp"])
 
     if choice == "Login":
-        if not st.session_state['logged_in']:
+        if not st.session_state.get('logged_in'):
             username = st.sidebar.text_input("Username", key="login_user")
             password = st.sidebar.text_input("Password", type='password', key="login_pass")
             if st.sidebar.button("Login"):
                 create_tables()
                 if login_user(username, password):
-                    st.session_state.update({'logged_in': True, 'username': username}); st.rerun()
+                    st.session_state.logged_in = True
+                    st.session_state.username = username
+                    st.query_params["user"] = username
+                    st.rerun()
                 else:
                     st.sidebar.warning("Incorrect Username/Password")
         else:
-            st.sidebar.success(f"Logged In as {st.session_state['username']}")
+            st.sidebar.success(f"Logged In as {st.session_state.get('username')}")
             if st.sidebar.button("Logout"):
-                st.session_state.clear(); st.rerun()
+                st.session_state.clear()
+                st.query_params.clear()
+                st.rerun()
     elif choice == "SignUp":
         st.sidebar.subheader("Create New Account")
         new_user = st.sidebar.text_input("Username", key="signup_user")
